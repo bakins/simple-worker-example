@@ -54,7 +54,9 @@ func New(max int, w WorkHandler, r RequestHandler) *Manager {
 	}
 }
 
-// Start starts the manager
+// Start starts the manager.
+// This polls for work by calling GetRequest.
+// It attempts to avoid polling in a tight loop when there is no work available.
 func (m *Manager) Start(ctx context.Context) error {
 	running := 0
 	// for letting manager know that worker is done
@@ -91,8 +93,8 @@ func (m *Manager) Start(ctx context.Context) error {
 				running--
 			case <-timer.C:
 				// use the timer so we will wait for a second for
-				// a worker to be done. This avoids
-				// a busy loop.
+				// worker(s) to be done. This is done to avoid
+				// a busy loop of polling for requests.
 				break DONE
 			}
 		}
