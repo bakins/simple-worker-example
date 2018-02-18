@@ -57,8 +57,8 @@ func New(max int, w WorkHandler, r RequestHandler) *Manager {
 // Start starts the manager
 func (m *Manager) Start(ctx context.Context) error {
 	running := 0
-	// for returning from worker goroutines
-	done := make(chan struct{}, m.max)
+	// for letting manager know that worker is done
+	done := make(chan struct{})
 
 	for {
 		// check if should still be running
@@ -115,7 +115,8 @@ func handleRequest(ctx context.Context, done chan struct{}, w WorkHandler, handl
 			// retry with a backoff, etc.
 			fmt.Println(err)
 		}
-		// let the manager know that we are done
+		// let the manager know that we are done.
+		// this will block until manager receives it.
 		done <- struct{}{}
 	}()
 }
