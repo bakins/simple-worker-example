@@ -54,6 +54,25 @@ func New(max int, w WorkHandler, r RequestHandler) *Manager {
 	}
 }
 
+// wait for up to waitTime for done signals.
+// returns number of done signals received
+func waitForDone(done chan struct{}, waitTime time.Duration) int {
+	count := 0
+	timer := time.NewTimer(waitTime)
+DONE:
+	for {
+		select {
+		case <-done:
+			count++
+		case <-timer.C:
+			break DONE
+		}
+	}
+	timer.Stop()
+
+	return count
+}
+
 // Start starts the manager.
 // This polls for work by calling GetRequest.
 // It attempts to avoid polling in a tight loop when there is no work available.
@@ -66,6 +85,13 @@ func (m *Manager) Start(ctx context.Context) error {
 		// check if should still be running
 		select {
 		case <-ctx.Done():
+			// wait for all workers to return.
+			// We want to avoid leaking goroutines.
+			// we could call waitForDone here if waitForDone took a maximum number
+			// of done's to wait for - this may leak goroutines, however
+			for i := 0; i < running; i++ {
+				<-done
+			}
 			return ctx.Err()
 		default:
 		}
@@ -85,20 +111,10 @@ func (m *Manager) Start(ctx context.Context) error {
 			}
 		}
 
-		timer := time.NewTimer(time.Second * 1)
-	DONE:
-		for {
-			select {
-			case <-done:
-				running--
-			case <-timer.C:
-				// use the timer so we will wait for a second for
-				// worker(s) to be done. This is done to avoid
-				// a busy loop of polling for requests.
-				break DONE
-			}
-		}
-		timer.Stop()
+		// wait for up to a second for workers to finish
+		// this avoids a busy loop just polling for work
+		count := waitForDone(done, time.Second)
+		running = running - count
 	}
 }
 
