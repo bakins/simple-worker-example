@@ -87,9 +87,14 @@ func TestManager(t *testing.T) {
 
 	// wait for work to be done
 	fmt.Println("waiting...")
-	time.Sleep(time.Second * 10)
+	for i := 0; i < 10; i++ {
+		time.Sleep(time.Second)
+		fmt.Printf("%#v\n", m.Stats())
+	}
 	cancel()
 
+	s := m.Stats()
+	require.Equal(t, len(names), int(s.Total))
 	require.Equal(t, len(names), len(w.responses))
 	for _, n := range names {
 		require.Contains(t, w.responses, n)

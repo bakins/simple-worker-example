@@ -3,6 +3,7 @@ package work
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 )
 
@@ -40,6 +41,9 @@ func (f RequestHandlerFunc) Handle(ctx context.Context, r Request) (Response, er
 
 // Manager manages getting requests, workers, and recording responses
 type Manager struct {
+	mu             sync.Mutex // for stats
+	running        int
+	total          uint64
 	max            int // maximum in process requests
 	workHandler    WorkHandler
 	requestHandler RequestHandler
@@ -51,6 +55,24 @@ func New(max int, w WorkHandler, r RequestHandler) *Manager {
 		max:            max,
 		workHandler:    w,
 		requestHandler: r,
+	}
+}
+
+// Stats
+type Stats struct {
+	Max     int
+	Running int
+	Total   uint64
+}
+
+// Stats returns stats for manager
+func (m *Manager) Stats() Stats {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return Stats{
+		Max:     m.max,
+		Running: m.running,
+		Total:   m.total,
 	}
 }
 
@@ -73,11 +95,30 @@ DONE:
 	return count
 }
 
+// locking wrapper
+func (m *Manager) getRunning() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.running
+}
+
+// change running by the amount passed. negative will decrement
+func (m *Manager) changeRunning(amount int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.running = m.running + amount
+}
+
+func (m *Manager) addTotal() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.total++
+}
+
 // Start starts the manager.
 // This polls for work by calling GetRequest.
 // It attempts to avoid polling in a tight loop when there is no work available.
 func (m *Manager) Start(ctx context.Context) error {
-	running := 0
 	// for letting manager know that worker is done
 	done := make(chan struct{})
 
@@ -89,6 +130,7 @@ func (m *Manager) Start(ctx context.Context) error {
 			// We want to avoid leaking goroutines.
 			// we could call waitForDone here if waitForDone took a maximum number
 			// of done's to wait for - this may leak goroutines, however
+			running := m.getRunning() // no other jobs should be added
 			for i := 0; i < running; i++ {
 				<-done
 			}
@@ -97,7 +139,7 @@ func (m *Manager) Start(ctx context.Context) error {
 		}
 
 		// should we get new work?
-		if running < m.max {
+		if m.getRunning() < m.max {
 			// we are polling for new work
 			req, err := m.workHandler.GetRequest(ctx)
 			if err != nil {
@@ -105,7 +147,8 @@ func (m *Manager) Start(ctx context.Context) error {
 				fmt.Println(err)
 			} else {
 				if req != nil {
-					running++
+					m.changeRunning(1)
+					m.addTotal()
 					handleRequest(ctx, done, m.workHandler, m.requestHandler, req)
 				}
 			}
@@ -114,7 +157,7 @@ func (m *Manager) Start(ctx context.Context) error {
 		// wait for up to a second for workers to finish
 		// this avoids a busy loop just polling for work
 		count := waitForDone(done, time.Second)
-		running = running - count
+		m.changeRunning(-count)
 	}
 }
 
